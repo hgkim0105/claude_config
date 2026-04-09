@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh auth:*)",
+      "Bash(cp ~/.claude/skills/plan.md /Users/hgkim/Projects/claude_config/skills/)",
+      "Bash(cp ~/.claude/skills/tdd-loop.md /Users/hgkim/Projects/claude_config/skills/)",
+      "Bash(chmod +x /Users/hgkim/Projects/claude_config/install.sh /Users/hgkim/Projects/claude_config/init-project.sh)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)"
+    ]
+  }
+}
