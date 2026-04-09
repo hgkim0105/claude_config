@@ -1,3 +1,8 @@
+---
+name: tdd-loop
+description: /plan으로 컨펌된 계획을 받아 테스트 작성→구현→pytest 실행→디버그→수정 루프를 자율 실행합니다. 최대 5회 재시도 후 막히면 에스컬레이션. Keywords: tdd, test, implement, loop, 구현, 테스트, 자동
+---
+
 # /tdd-loop — Autonomous TDD Execution Skill
 
 When the user invokes `/tdd-loop [기능명 또는 계획]`, execute the full TDD cycle autonomously.

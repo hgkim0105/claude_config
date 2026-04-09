@@ -1,3 +1,8 @@
+---
+name: plan
+description: 기능 요청을 받아 API/DB/파일/테스트 케이스가 포함된 구현 계획서를 생성하고 사용자 컨펌을 기다립니다. FastAPI + Next.js 풀스택 프로젝트에 최적화. Keywords: plan, 계획, 기능, feature, implement, 구현
+---
+
 # /plan — Feature Planning Skill
 
 When the user invokes `/plan [기능 설명]`, act as a senior software architect.
