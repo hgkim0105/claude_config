@@ -42,6 +42,15 @@ mkdir my-project && cd my-project
 claude  # Claude Code 실행
 ```
 
+### 템플릿 스펙
+
+| 템플릿 | 스택 |
+|--------|------|
+| `fullstack` | FastAPI · SQLAlchemy 2.0 · Supabase PostgreSQL · Next.js 14 App Router · shadcn/ui · Tailwind · Supabase Auth · RBAC · openapi-ts · Clean Architecture · Vercel + Railway |
+| `fastapi-only` | FastAPI · SQLAlchemy 2.0 · Supabase PostgreSQL · Supabase Auth · RBAC · Clean Architecture · pytest |
+| `nextjs-only` | Next.js 14 App Router · shadcn/ui · Tailwind · Supabase Auth (`@supabase/ssr`) · TanStack Query · openapi-ts |
+| `base` | 스택 무관 — Clean Architecture 규칙 + TDD 원칙만 |
+
 ## 개발 워크플로우
 
 ```
