@@ -84,6 +84,36 @@ project/
 cd frontend && npx openapi-ts
 ```
 
+## DB 환경
+
+Supabase PostgreSQL 사용.
+
+```bash
+# 로컬 개발: Supabase CLI (Docker 필요)
+brew install supabase/tap/supabase
+supabase init && supabase start
+# → 로컬 PostgreSQL: postgresql://postgres:postgres@localhost:54322/postgres
+# → Supabase Studio: http://localhost:54323
+
+# 종료
+supabase stop
+```
+
+**환경별 DB:**
+- 로컬: `supabase start` (localhost)
+- 개발: Supabase 프로젝트 `{project}-dev`
+- 운영: Supabase 프로젝트 `{project}-prod`
+
+**`backend/.env` 설정:**
+```
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:54322/postgres
+SUPABASE_URL=http://localhost:54321
+SUPABASE_ANON_KEY=...
+```
+
+- `.env`의 `DATABASE_URL`만 바꿔서 환경 전환
+- `.env.example`에 키 목록 유지 (값은 제외)
+
 ## Python 환경
 
 ```bash
