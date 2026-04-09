@@ -18,7 +18,8 @@
 backend/app/
 ├── domain/
 │   ├── entities/          # 순수 Python 도메인 모델 (프레임워크 의존 없음)
-│   └── repositories/      # 추상 인터페이스 (ABC)
+│   ├── repositories/      # 추상 인터페이스 (ABC)
+│   └── exceptions.py      # 도메인 커스텀 예외
 ├── application/
 │   └── use_cases/         # 비즈니스 로직, domain 조합
 ├── infrastructure/
@@ -58,7 +59,8 @@ project/
 │   │   │   └── rbac.py          # Role 체크 dependencies
 │   │   ├── domain/
 │   │   │   ├── entities/
-│   │   │   └── repositories/
+│   │   │   ├── repositories/
+│   │   │   └── exceptions.py
 │   │   ├── application/
 │   │   │   └── use_cases/
 │   │   ├── infrastructure/
@@ -73,6 +75,7 @@ project/
 │   │   ├── conftest.py
 │   │   └── test_*.py
 │   ├── alembic/
+│   │   └── env.py               # async 설정 필수
 │   ├── alembic.ini
 │   ├── requirements.txt
 │   └── .env.example
@@ -80,12 +83,18 @@ project/
 │   ├── src/
 │   │   ├── app/
 │   │   │   ├── (public)/        # 인증 불필요
-│   │   │   └── (dashboard)/     # 인증 필요
+│   │   │   ├── (dashboard)/     # 인증 필요
+│   │   │   ├── layout.tsx       # Providers 포함
+│   │   │   └── providers.tsx    # TanStack Query Provider
 │   │   ├── components/
 │   │   ├── lib/
 │   │   │   ├── api.ts
 │   │   │   └── utils.ts
+│   │   ├── utils/supabase/
+│   │   │   ├── client.ts        # 브라우저용 Supabase client
+│   │   │   └── server.ts        # 서버 컴포넌트용 Supabase client
 │   │   └── types/               # openapi-ts 자동 생성 — 수정 금지
+│   ├── middleware.ts
 │   ├── openapi-ts.config.ts
 │   ├── package.json
 │   └── .env.example
@@ -101,6 +110,33 @@ project/
 - 모든 엔드포인트에 `response_model` 명시
 - HTTP 상태 코드: 생성=201, 없음=404, 검증오류=422
 - 라우터에 비즈니스 로직 작성 금지
+
+### Dependency Injection 패턴
+
+use case에 repository를 주입하는 표준 패턴:
+
+```python
+# presentation/routers/users.py
+from typing import Annotated
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.database import get_session
+from app.infrastructure.database.repositories.user_repository import UserRepositoryImpl
+from app.application.use_cases.create_user import CreateUserUseCase
+
+async def get_create_user_use_case(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CreateUserUseCase:
+    return CreateUserUseCase(UserRepositoryImpl(session))
+
+@router.post("/", status_code=201, response_model=UserResponse)
+async def create_user(
+    data: UserCreate,
+    use_case: Annotated[CreateUserUseCase, Depends(get_create_user_use_case)],
+):
+    user = await use_case.execute(data)
+    return UserResponse.model_validate(user.__dict__)
+```
 
 ### Use Cases (Application Layer)
 ```python
@@ -142,6 +178,45 @@ class UserRepositoryABC(ABC):
     async def create(self, user: User) -> User: ...
 ```
 
+### Error Handling 패턴
+
+domain 예외를 정의하고 main.py에서 HTTP 응답으로 변환. 라우터에 try/except 작성 금지.
+
+```python
+# domain/exceptions.py
+class DomainException(Exception): pass
+class NotFoundError(DomainException): pass
+class ConflictError(DomainException): pass
+class ForbiddenError(DomainException): pass
+```
+
+```python
+# app/main.py
+from fastapi.responses import JSONResponse
+from app.domain.exceptions import NotFoundError, ConflictError, ForbiddenError
+
+@app.exception_handler(NotFoundError)
+async def not_found_handler(request, exc):
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+@app.exception_handler(ConflictError)
+async def conflict_handler(request, exc):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+@app.exception_handler(ForbiddenError)
+async def forbidden_handler(request, exc):
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+```
+
+use case에서 사용:
+```python
+async def execute(self, id: str) -> User:
+    user = await self.user_repo.get_by_id(id)
+    if not user:
+        raise NotFoundError(f"User {id} not found")
+    return user
+```
+
 ### SQLAlchemy 2.0 (Infrastructure Layer)
 - `AsyncSession` 사용
 - ORM 모델은 `infrastructure/database/models/`
@@ -151,7 +226,7 @@ class UserRepositoryABC(ABC):
 ### Pydantic Schemas (Presentation Layer)
 - `{Resource}Create`, `{Resource}Update`, `{Resource}Response` 패턴
 - `Response` 스키마는 항상 `id`, `created_at` 포함
-- domain entity → response schema 변환은 라우터에서
+- domain entity → response schema 변환은 라우터에서 (`model_validate`)
 
 ---
 
@@ -182,7 +257,7 @@ async def get_current_user(token = Depends(security)) -> dict:
 
 **`backend/.env`에 추가:**
 ```
-SUPABASE_JWT_SECRET=your-supabase-jwt-secret  # Supabase 프로젝트 설정에서 확인
+SUPABASE_JWT_SECRET=your-supabase-jwt-secret  # Supabase 프로젝트 → Settings → API → JWT Secret
 ```
 
 ---
@@ -214,7 +289,7 @@ async def delete_item(id: str): ...
 async def list_items(user = Depends(require_role("admin", "manager"))): ...
 ```
 
-**역할 부여 (Supabase Dashboard 또는 Admin API):**
+**역할 부여:**
 ```python
 # infrastructure/external/supabase_admin.py
 supabase_admin.auth.admin.update_user_by_id(
@@ -239,11 +314,6 @@ app.add_middleware(
 )
 ```
 
-**`backend/.env`에 추가:**
-```
-FRONTEND_URL=https://your-app.vercel.app
-```
-
 ---
 
 ## Frontend Conventions
@@ -254,18 +324,81 @@ FRONTEND_URL=https://your-app.vercel.app
 - `app/api/` — Route handlers (백엔드 프록시 용도만)
 - Server Component 기본, 인터랙션 있는 것만 `"use client"`
 
-### Auth (Frontend)
+### Auth (Frontend) — `@supabase/ssr` 사용
+
+```typescript
+// src/utils/supabase/client.ts — 클라이언트 컴포넌트용
+import { createBrowserClient } from '@supabase/ssr'
+export const createClient = () =>
+  createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  )
+
+// src/utils/supabase/server.ts — 서버 컴포넌트용
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
+export const createClient = () => {
+  const cookieStore = cookies()
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { getAll: () => cookieStore.getAll() } },
+  )
+}
+```
+
 ```typescript
 // middleware.ts — 루트에 위치
-import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs'
+import { createServerClient } from '@supabase/ssr'
+import { NextResponse, type NextRequest } from 'next/server'
 
-export async function middleware(req) {
-  const supabase = createMiddlewareClient({ req, res })
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) return NextResponse.redirect('/login')
+export async function middleware(request: NextRequest) {
+  let response = NextResponse.next({ request })
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll: () => request.cookies.getAll(),
+        setAll: (cookiesToSet) => {
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(name, value, options)
+          )
+        },
+      },
+    },
+  )
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.redirect(new URL('/login', request.url))
+  return response
 }
 
 export const config = { matcher: ['/dashboard/:path*'] }
+```
+
+### TanStack Query 설정
+
+```typescript
+// src/app/providers.tsx
+'use client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useState } from 'react'
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  const [queryClient] = useState(() => new QueryClient())
+  return (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  )
+}
+
+// src/app/layout.tsx
+import { Providers } from './providers'
+export default function RootLayout({ children }) {
+  return (
+    <html><body><Providers>{children}</Providers></body></html>
+  )
+}
 ```
 
 ### API 호출
@@ -275,7 +408,7 @@ export const config = { matcher: ['/dashboard/:path*'] }
 - 클라이언트 컴포넌트: TanStack Query
 
 ### Components
-- shadcn/ui 컴포넌트 우선 사용
+- shadcn/ui 컴포넌트 우선 사용 (`npx shadcn-ui@latest add {component}`)
 - 커스텀 컴포넌트는 `components/{feature}/` 하위에
 
 ---
@@ -317,15 +450,12 @@ pytest
 pytest-asyncio
 ```
 
-**`frontend/package.json` 주요 의존성:**
-```
-next, react, react-dom
-@supabase/supabase-js
-@supabase/auth-helpers-nextjs
-@tanstack/react-query
-@hey-api/openapi-ts
-tailwindcss
-shadcn/ui (npx shadcn-ui@latest init)
+**`frontend` 주요 의존성:**
+```bash
+npm install @supabase/ssr @supabase/supabase-js
+npm install @tanstack/react-query
+npm install @hey-api/openapi-ts @hey-api/client-fetch
+npx shadcn-ui@latest init
 ```
 
 ---
@@ -337,12 +467,10 @@ shadcn/ui (npx shadcn-ui@latest init)
 cd backend
 source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000
-# → http://localhost:8000
-# → API 문서: http://localhost:8000/docs
+# → http://localhost:8000/docs
 
 # Frontend
-cd frontend
-npm run dev
+cd frontend && npm run dev
 # → http://localhost:3000
 
 # DB (로컬)
@@ -355,21 +483,16 @@ supabase start
 
 ## DB 환경
 
-Supabase PostgreSQL 사용.
-
 ```bash
 # 로컬 개발: Supabase CLI (Docker 필요)
 brew install supabase/tap/supabase
 supabase init && supabase start
-
-# 종료
 supabase stop
 ```
 
 **환경별 DB:**
-- 로컬: `supabase start` (localhost)
-- 개발: Supabase 프로젝트 `{project}-dev`
-- 운영: Supabase 프로젝트 `{project}-prod`
+- 로컬: `supabase start`
+- 개발/운영: Supabase 프로젝트 별도 생성, `.env`의 URL만 교체
 
 **`backend/.env`:**
 ```
@@ -380,15 +503,44 @@ SUPABASE_JWT_SECRET=...
 FRONTEND_URL=http://localhost:3000
 ```
 
+**`frontend/.env.local`:**
+```
+NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
 ---
 
 ## Alembic 마이그레이션
 
+SQLAlchemy async 사용 시 `alembic/env.py`를 async로 설정 필수:
+
+```python
+# alembic/env.py 핵심 부분
+import asyncio
+from sqlalchemy.ext.asyncio import create_async_engine
+from app.core.config import settings
+from app.infrastructure.database.models import Base  # 모든 모델 import
+
+def run_migrations_online():
+    connectable = create_async_engine(settings.DATABASE_URL)
+
+    async def run():
+        async with connectable.connect() as connection:
+            await connection.run_sync(do_run_migrations)
+        await connectable.dispose()
+
+    asyncio.run(run())
+
+def do_run_migrations(connection):
+    context.configure(connection=connection, target_metadata=Base.metadata)
+    with context.begin_transaction():
+        context.run_migrations()
+```
+
 ```bash
 cd backend
-
-# 초기 설정 (최초 1회)
-alembic init alembic
 
 # 마이그레이션 생성
 alembic revision --autogenerate -m "add users table"
@@ -399,7 +551,7 @@ alembic upgrade head
 # 롤백
 alembic downgrade -1
 
-# 현재 상태 확인
+# 현재 상태
 alembic current
 ```
 
@@ -425,10 +577,43 @@ cd backend && pytest -v
 cd backend && pytest tests/test_specific.py -v
 ```
 
-- 테스트는 `tests/conftest.py`의 fixture 사용
-- DB는 테스트용 SQLite in-memory 또는 Supabase 테스트 프로젝트
+### conftest.py 기본 구조
+
+```python
+# tests/conftest.py
+import pytest
+from unittest.mock import AsyncMock
+from httpx import AsyncClient, ASGITransport
+from app.main import app
+
+# use case 단위 테스트용 — mock repository 주입
+@pytest.fixture
+def mock_user_repo():
+    from app.domain.repositories.user_repository import UserRepositoryABC
+    return AsyncMock(spec=UserRepositoryABC)
+
+@pytest.fixture
+def create_user_use_case(mock_user_repo):
+    from app.application.use_cases.create_user import CreateUserUseCase
+    return CreateUserUseCase(mock_user_repo)
+
+# API 통합 테스트용
+@pytest.fixture
+async def client():
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        yield c
+
+# 인증이 필요한 엔드포인트 테스트용
+@pytest.fixture
+def auth_headers():
+    return {"Authorization": "Bearer test-token"}
+```
+
+- Use case 테스트: mock repository 주입 (DB 없이 비즈니스 로직만 테스트)
+- API 통합 테스트: `AsyncClient` + `ASGITransport`
 - 각 테스트는 독립적 (setup/teardown 철저히)
-- Use case 테스트: repository를 mock으로 주입 (Clean Architecture 덕분에 가능)
 - 테스트 파일명: `test_{resource}.py`
 - 테스트 함수명: `test_{method}_{scenario}`
 
