@@ -84,6 +84,19 @@ project/
 cd frontend && npx openapi-ts
 ```
 
+## Python 환경
+
+```bash
+# 가상환경 위치: backend/.venv
+cd backend
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+- 모든 Python 명령은 `backend/` 에서 실행 (venv 활성화 상태)
+- `pytest`, `uvicorn` 등 전부 `backend/.venv` 기준
+
 ## Testing
 
 ### Backend (pytest)
